@@ -27,3 +27,8 @@ rustc-ice-*.txt
 # Added by cargo
 
 /target
+
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
