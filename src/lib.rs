@@ -1,4 +1,5 @@
 pub mod database;
+pub mod file_key;
 pub mod filename;
 pub mod identification;
 pub mod matching;

@@ -1,17 +1,77 @@
-use marquee::{database, filename, identification, matching, scanner, tmdb};
+use marquee::{database, file_key, filename, identification, matching, scanner, tmdb};
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn main() {
     let mut args = env::args_os().skip(1);
 
     let Some(command) = args.next() else {
         print_usage();
+        println!("  marquee migrate");
         return;
     };
 
     match command.to_string_lossy().as_ref() {
+        "migrate" => {
+            let mut connection = match open_default_database() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    eprintln!("Could not open Marquee database: {error}");
+                    std::process::exit(1);
+                }
+            };
+
+            let version: i64 =
+                match connection.query_row("PRAGMA user_version", [], |row| row.get(0)) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        eprintln!("Could not read database version: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+            if version > 2 {
+                eprintln!(
+                    "Database version {version} is newer than this Marquee version supports."
+                );
+                std::process::exit(1);
+            }
+
+            if version == 0 {
+                match database::migrate_file_keys(&mut connection) {
+                    Ok(count) => {
+                        println!("Migration 1 complete: migrated {count} file records.");
+                    }
+                    Err(error) => {
+                        eprintln!("Migration 1 failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            let version: i64 =
+                match connection.query_row("PRAGMA user_version", [], |row| row.get(0)) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        eprintln!("Could not read database version: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+            if version == 1 {
+                match database::migrate_root_paths(&mut connection) {
+                    Ok(()) => println!("Migration 2 complete: added library root tracking."),
+                    Err(error) => {
+                        eprintln!("Migration 2 failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            } else if version == 2 {
+                println!("Database is already up to date (version 2).");
+            }
+        }
+
         "scan" => {
             let directories: Vec<PathBuf> = args.map(PathBuf::from).collect();
 
@@ -289,6 +349,7 @@ fn main() {
             let mut total_files = 0;
             let mut automatic_matches = 0;
             let mut already_identified = 0;
+            let mut already_pending = 0;
             let mut manual_identification = 0;
             let mut search_failures = 0;
             let mut scanning_errors = 0;
@@ -302,12 +363,41 @@ fn main() {
 
                 let result = identification::prepare_directory(&directory);
 
+                let root_path = match directory.canonicalize() {
+                    Ok(path) => path.to_string_lossy().into_owned(),
+                    Err(error) => {
+                        scanning_errors += 1;
+                        eprintln!("  ! Could not resolve library root: {error}");
+                        continue;
+                    }
+                };
+
+                let database_errors_before = database_errors;
+                let mut root_scan_complete = result.errors.is_empty();
+                let mut scanned_paths = Vec::with_capacity(result.candidates.len());
+
                 for candidate in &result.candidates {
                     total_files += 1;
 
-                    let file_key = match create_file_key(&candidate.path) {
+                    let candidate_path = match candidate.path.canonicalize() {
+                        Ok(path) => path,
+                        Err(error) => {
+                            root_scan_complete = false;
+                            scanning_errors += 1;
+                            eprintln!(
+                                "  ! Could not resolve file path {}: {error}",
+                                candidate.path.display()
+                            );
+                            continue;
+                        }
+                    };
+
+                    let candidate_path_string = candidate_path.to_string_lossy().into_owned();
+
+                    let file_key = match file_key::create(&candidate_path) {
                         Ok(key) => key,
                         Err(error) => {
+                            root_scan_complete = false;
                             database_errors += 1;
                             eprintln!(
                                 "  ! Could not create file key for {}: {error}",
@@ -316,6 +406,26 @@ fn main() {
                             continue;
                         }
                     };
+
+                    scanned_paths.push(candidate_path_string.clone());
+
+                    match database::register_file_location(
+                        &mut connection,
+                        &file_key,
+                        &candidate_path_string,
+                        &root_path,
+                    ) {
+                        Ok(_) => {}
+                        Err(error) => {
+                            root_scan_complete = false;
+                            database_errors += 1;
+                            eprintln!(
+                                "  ! Could not register location for {}: {error}",
+                                candidate.path.display()
+                            );
+                            continue;
+                        }
+                    }
 
                     match database::get_identification(&connection, &file_key) {
                         Ok(Some(existing)) => {
@@ -328,6 +438,49 @@ fn main() {
                             database_errors += 1;
                             eprintln!(
                                 "  ! Could not check database for {}: {error}",
+                                candidate.path.display()
+                            );
+                            continue;
+                        }
+                    }
+
+                    match database::get_pending_identification(&connection, &file_key) {
+                        Ok(Some(_)) => {
+                            let filename = candidate.parsed.original_name.as_str();
+
+                            match database::update_pending_location(
+                                &connection,
+                                &file_key,
+                                &candidate_path_string,
+                                filename,
+                            ) {
+                                Ok(true) => {
+                                    already_pending += 1;
+                                    println!("  ↻ Already awaiting manual identification");
+                                }
+                                Ok(false) => {
+                                    database_errors += 1;
+                                    eprintln!(
+                                        "  ! Could not update pending location for {}",
+                                        candidate.path.display()
+                                    );
+                                }
+                                Err(error) => {
+                                    database_errors += 1;
+                                    eprintln!(
+                                        "  ! Could not update pending location for {}: {error}",
+                                        candidate.path.display()
+                                    );
+                                }
+                            }
+
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            database_errors += 1;
+                            eprintln!(
+                                "  ! Could not check pending identification for {}: {error}",
                                 candidate.path.display()
                             );
                             continue;
@@ -440,6 +593,25 @@ fn main() {
                         error.message
                     );
                 }
+
+                if root_scan_complete && database_errors == database_errors_before {
+                    match database::reconcile_file_locations(
+                        &mut connection,
+                        &root_path,
+                        &scanned_paths,
+                    ) {
+                        Ok(0) => {}
+                        Ok(removed) => {
+                            println!("  Reconciled {removed} stale file location(s).");
+                        }
+                        Err(error) => {
+                            database_errors += 1;
+                            eprintln!("  ! Could not reconcile library root: {error}");
+                        }
+                    }
+                } else {
+                    println!("  Skipping location reconciliation because the scan was incomplete.");
+                }
             }
 
             println!("\n===========================");
@@ -448,7 +620,8 @@ fn main() {
             println!("Video files scanned: {total_files}");
             println!("Automatically identified: {automatic_matches}");
             println!("Already identified: {already_identified}");
-            println!("{manual_identification} files need manual identification");
+            println!("Already awaiting manual identification: {already_pending}");
+            println!("New files needing manual identification: {manual_identification}");
             println!("TMDb search failures: {search_failures}");
             println!("Scanning errors: {scanning_errors}");
             println!("Database errors: {database_errors}");
@@ -490,7 +663,7 @@ fn main() {
 
             let path = PathBuf::from(path);
 
-            let file_key = match create_file_key(&path) {
+            let file_key = match file_key::create(&path) {
                 Ok(key) => key,
                 Err(error) => {
                     eprintln!("Could not access file: {error}");
@@ -661,10 +834,6 @@ fn open_default_database() -> Result<rusqlite::Connection, Box<dyn std::error::E
     std::fs::create_dir_all(&application_directory)?;
 
     Ok(database::open(application_directory.join("marquee.db"))?)
-}
-
-fn create_file_key(path: &Path) -> std::io::Result<String> {
-    Ok(path.canonicalize()?.to_string_lossy().into_owned())
 }
 
 fn create_pending_identification(
