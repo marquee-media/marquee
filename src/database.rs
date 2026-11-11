@@ -46,6 +46,14 @@ pub struct FileLocation {
     pub is_primary: bool,
 }
 
+/// An identified media file together with all its known locations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedMedia {
+    pub file_key: String,
+    pub identification: IdentificationRecord,
+    pub locations: Vec<FileLocation>,
+}
+
 /// Opens a database and initializes its schema.
 pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Connection> {
     let connection = Connection::open(path)?;
@@ -480,6 +488,60 @@ pub fn get_file_locations(
     })?;
 
     rows.collect()
+}
+
+/// Retrieves every identified media file and all its known locations.
+pub fn list_identified_files(connection: &Connection) -> rusqlite::Result<Vec<IndexedMedia>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT file_key, tmdb_id, media_type, season, episode, episode_end, is_manual
+        FROM identifications
+        ORDER BY file_key
+        ",
+    )?;
+
+    let rows = statement.query_map([], |row| {
+        let media_type: String = row.get(2)?;
+
+        Ok((
+            row.get::<_, String>(0)?,
+            IdentificationRecord {
+                tmdb_id: row.get(1)?,
+                media_type: string_to_media_type(&media_type)?,
+                season: row
+                    .get::<_, Option<i64>>(3)?
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                episode: row
+                    .get::<_, Option<i64>>(4)?
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                episode_end: row
+                    .get::<_, Option<i64>>(5)?
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                is_manual: row.get::<_, i64>(6)? != 0,
+            },
+        ))
+    })?;
+
+    let mut indexed_media = Vec::new();
+
+    for row in rows {
+        let (file_key, identification) = row?;
+        let locations = get_file_locations(connection, &file_key)?;
+
+        indexed_media.push(IndexedMedia {
+            file_key,
+            identification,
+            locations,
+        });
+    }
+
+    Ok(indexed_media)
 }
 
 /// Retrieves every file awaiting manual identification.

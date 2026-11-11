@@ -1,9 +1,10 @@
-use marquee::{database, file_key, filename, identification, matching, scanner, tmdb};
+use marquee::{database, file_key, filename, identification, matching, scanner, server, tmdb};
 
 use std::env;
 use std::path::PathBuf;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut args = env::args_os().skip(1);
 
     let Some(command) = args.next() else {
@@ -13,6 +14,20 @@ fn main() {
     };
 
     match command.to_string_lossy().as_ref() {
+        "serve" => {
+            let database_path = match default_database_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("Could not determine Marquee database path: {error}");
+                    std::process::exit(1);
+                }
+            };
+
+            if let Err(error) = server::run(database_path).await {
+                eprintln!("Marquee server failed: {error}");
+                std::process::exit(1);
+            }
+        }
         "migrate" => {
             let mut connection = match open_default_database() {
                 Ok(connection) => connection,
@@ -823,7 +838,7 @@ fn main() {
     }
 }
 
-fn open_default_database() -> Result<rusqlite::Connection, Box<dyn std::error::Error>> {
+fn default_database_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let data_directory = match env::var_os("XDG_DATA_HOME") {
         Some(directory) if !directory.is_empty() => PathBuf::from(directory),
         _ => PathBuf::from(env::var_os("HOME").ok_or("Could not determine home directory")?)
@@ -833,7 +848,11 @@ fn open_default_database() -> Result<rusqlite::Connection, Box<dyn std::error::E
     let application_directory = data_directory.join("marquee");
     std::fs::create_dir_all(&application_directory)?;
 
-    Ok(database::open(application_directory.join("marquee.db"))?)
+    Ok(application_directory.join("marquee.db"))
+}
+
+fn open_default_database() -> Result<rusqlite::Connection, Box<dyn std::error::Error>> {
+    Ok(database::open(default_database_path()?)?)
 }
 
 fn create_pending_identification(
@@ -911,6 +930,7 @@ fn print_usage() {
     println!("Marquee - Local-first media server");
     println!();
     println!("Usage:");
+    println!("  marquee serve");
     println!("  marquee scan <directory> [directory ...]");
     println!("  marquee parse <filename>");
     println!("  marquee preview <directory> [directory ...]");

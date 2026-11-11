@@ -5,4 +5,5 @@ pub mod identification;
 pub mod matching;
 pub mod media;
 pub mod scanner;
+pub mod server;
 pub mod tmdb;
