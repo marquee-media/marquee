@@ -1,4 +1,3 @@
-
 # Marquee Roadmap
 
 Marquee is a generic, local-first media server designed to identify, organize, and serve personal media libraries.
@@ -6,49 +5,64 @@ Marquee is a generic, local-first media server designed to identify, organize, a
 ## V1 — Core functionality
 
 ### Media scanning and identification
-- [x] Recursive directory scanning
-- [x] Video file filtering
-- [x] Filename parsing through Hunch
-- [x] Extract titles, years, seasons and episode numbers
-- [x] Preserve original filenames and file paths
-- [x] Handle uncertain filename results without guessing
-- [ ] Metadata identification through TMDb
-- [ ] Embedded media metadata extraction
-- [ ] Manual identification and correction
+- Recursive directory scanning
+- Video file filtering
+- Filename parsing through Hunch
+- Extract titles, years, seasons and episode numbers
+- Preserve original filenames and file paths
+- Handle uncertain filename results without guessing
+- Metadata identification through TMDb
+- Embedded media metadata extraction
+- Manual identification and correction
+- Persistent identification (content-based file fingerprinting)
+- Candidate retention for manual review
 
 ### Media organization
-- [ ] Organize media into per-title folders
-- [ ] Support index-in-place mode
-- [ ] Preserve original files and avoid destructive operations
-- [ ] Handle multiple versions of the same media
-- [ ] Handle files containing multiple episodes
+- Organize media into per-title folders
+- Support index-in-place mode
+- Preserve original files and avoid destructive operations
+- Handle multiple versions of the same media
+- Handle files containing multiple episodes
 
 ### Media server
-- [ ] Serve the library over the local network
-- [ ] Web interface
-- [ ] Video playback
-- [ ] Subtitle support
+- Serve the library over the local network
+- Web interface
+- Video playback (direct play, default audio track)
 
-## V2 — Extensibility and improvements
+## V2 — Desktop application
+
+- Native Qt + GStreamer player
+- Full audio track switching (no remux, no browser limitations)
+- Subtitle support with offset adjustment
+- System tray, native file dialogs
+- QWebEngineView wrapping existing web UI
+- Fragmented MP4 live remux fallback for web UI (non-default tracks)
 
 ### Filename parsing
-- [ ] User-defined filename patterns for non-standard conventions (e.g., `ESx<number>` for Spanish-language episode numbering).
-- [ ] Configurable parsing rules and naming conventions
+- User-defined filename patterns for non-standard conventions (e.g., `ESx<number>` for Spanish-language episode numbering)
+- Configurable parsing rules and naming conventions
 
 ### Library management
-- [ ] Additional metadata providers
-- [ ] Improved automatic identification
-- [ ] Advanced library organization
+- Additional metadata providers
+- Improved automatic identification
+- Advanced library organization
+
+## V3 — Discovery
+
+- "Watch on" provider badges on details view (TMDb watch providers API)
+- Browse tab: discover content by streaming service + region
 
 ## Future possibilities
 
-Features not currently committed to a specific release:
+### Library features
 - Collections
-- Achievements
 - Multiple user profiles
 - Remote access
+
+### Maintenance
 - Backup functionality
 - Library monitoring
-- Localization
+
+### Platform
 - Mobile application
-- Standalone desktop application
+- Localization   
