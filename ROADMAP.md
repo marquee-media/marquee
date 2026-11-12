@@ -17,13 +17,6 @@ Marquee is a generic, local-first media server designed to identify, organize, a
 - Persistent identification (content-based file fingerprinting)
 - Candidate retention for manual review
 
-### Media organization
-- Organize media into per-title folders
-- Support index-in-place mode
-- Preserve original files and avoid destructive operations
-- Handle multiple versions of the same media
-- Handle files containing multiple episodes
-
 ### Media server
 - Serve the library over the local network
 - Web interface
@@ -37,6 +30,12 @@ Marquee is a generic, local-first media server designed to identify, organize, a
 - System tray, native file dialogs
 - QWebEngineView wrapping existing web UI
 - Fragmented MP4 live remux fallback for web UI (non-default tracks)
+
+### Media organization
+- Organize media into per-title folders
+- Support index-in-place mode
+- Handle multiple versions of the same media
+- Handle files containing multiple episodes
 
 ### Filename parsing
 - User-defined filename patterns for non-standard conventions (e.g., `ESx<number>` for Spanish-language episode numbering)
