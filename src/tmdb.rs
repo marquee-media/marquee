@@ -135,6 +135,25 @@ impl TmdbClient {
 
         Ok(response.results)
     }
+
+    /// Retrieves full metadata for an existing movie or TV series.
+    pub fn get_details(
+        &self,
+        tmdb_id: u64,
+        media_type: &str,
+    ) -> Result<TmdbSearchResult, TmdbError> {
+        let url = format!("{TMDB_BASE_URL}/{media_type}/{tmdb_id}");
+
+        let result: TmdbSearchResult = self
+            .client
+            .get(url)
+            .query(&[("api_key", self.api_key.as_str())])
+            .send()?
+            .error_for_status()?
+            .json()?;
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]

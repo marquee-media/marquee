@@ -46,7 +46,7 @@ async fn main() {
                     }
                 };
 
-            if version > 2 {
+            if version > 4 {
                 eprintln!(
                     "Database version {version} is newer than this Marquee version supports."
                 );
@@ -82,8 +82,46 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
-            } else if version == 2 {
-                println!("Database is already up to date (version 2).");
+            }
+
+            let version: i64 =
+                match connection.query_row("PRAGMA user_version", [], |row| row.get(0)) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        eprintln!("Could not read database version: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+            if version == 2 {
+                match database::migrate_media_metadata(&mut connection) {
+                    Ok(()) => println!("Migration 3 complete: added media metadata storage."),
+                    Err(error) => {
+                        eprintln!("Migration 3 failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            let version: i64 =
+                match connection.query_row("PRAGMA user_version", [], |row| row.get(0)) {
+                    Ok(version) => version,
+                    Err(error) => {
+                        eprintln!("Could not read database version: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+            if version == 3 {
+                match database::migrate_candidate_poster_paths(&mut connection) {
+                    Ok(()) => println!("Migration 4 complete: renamed candidate poster column."),
+                    Err(error) => {
+                        eprintln!("Migration 4 failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            } else if version == 4 {
+                println!("Database is already up to date (version 4).");
             }
         }
 
@@ -510,10 +548,37 @@ async fn main() {
                         ) => {
                             let record = create_identification_record(candidate, &matched);
 
-                            match database::resolve_pending_identification(
+                            let title = match matched.media_type {
+                                matching::TmdbMediaType::Movie => matched.result.title.as_deref(),
+                                matching::TmdbMediaType::Tv => matched.result.name.as_deref(),
+                            }
+                            .unwrap_or("Unknown title");
+
+                            let date = match matched.media_type {
+                                matching::TmdbMediaType::Movie => {
+                                    matched.result.release_date.as_deref()
+                                }
+                                matching::TmdbMediaType::Tv => {
+                                    matched.result.first_air_date.as_deref()
+                                }
+                            };
+
+                            let metadata = database::MediaMetadata {
+                                tmdb_id: matched.result.id as i64,
+                                media_type: matched.media_type,
+                                title: title.to_string(),
+                                year: date
+                                    .and_then(|date| date.get(..4))
+                                    .and_then(|year| year.parse::<u16>().ok()),
+                                overview: matched.result.overview.clone(),
+                                poster_path: matched.result.poster_path.clone(),
+                            };
+
+                            match database::resolve_pending_identification_with_metadata(
                                 &mut connection,
                                 &file_key,
                                 &record,
+                                &metadata,
                             ) {
                                 Ok(()) => {
                                     automatic_matches += 1;
@@ -741,7 +806,21 @@ async fn main() {
                 is_manual: true,
             };
 
-            match database::resolve_pending_identification(&mut connection, &file_key, &record) {
+            let metadata = database::MediaMetadata {
+                tmdb_id: selected.tmdb_id,
+                media_type: selected.media_type,
+                title: selected.title.clone(),
+                year: selected.year,
+                overview: None,
+                poster_path: selected.poster_path.clone(),
+            };
+
+            match database::resolve_pending_identification_with_metadata(
+                &mut connection,
+                &file_key,
+                &record,
+                &metadata,
+            ) {
                 Ok(()) => {
                     println!("Manual identification saved:");
                     println!("  File: {}", pending.original_filename);
@@ -759,6 +838,127 @@ async fn main() {
                     eprintln!("Could not save identification: {error}");
                     std::process::exit(1);
                 }
+            }
+        }
+
+        "backfill" => {
+            if let Err(error) = tokio::task::spawn_blocking(|| {
+                let connection = match open_default_database() {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        eprintln!("Could not open Marquee database: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+                let identifications = match database::list_identifications(&connection) {
+                    Ok(records) => records,
+                    Err(error) => {
+                        eprintln!("Could not load identifications: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+                let client = match tmdb::TmdbClient::from_env() {
+                    Ok(client) => client,
+                    Err(error) => {
+                        eprintln!("Could not initialize TMDb client: {error}");
+                        std::process::exit(1);
+                    }
+                };
+
+                let mut fetched = 0;
+                let mut skipped = 0;
+                let mut failed = 0;
+
+                for record in identifications {
+                    match database::get_media_metadata(
+                        &connection,
+                        record.tmdb_id,
+                        record.media_type,
+                    ) {
+                        Ok(Some(_)) => {
+                            skipped += 1;
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!(
+                                "Could not check metadata for TMDb ID {}: {error}",
+                                record.tmdb_id
+                            );
+                            failed += 1;
+                            continue;
+                        }
+                    }
+
+                    let media_type = match record.media_type {
+                        matching::TmdbMediaType::Movie => "movie",
+                        matching::TmdbMediaType::Tv => "tv",
+                    };
+
+                    let tmdb_id = match u64::try_from(record.tmdb_id) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            eprintln!("Invalid TMDb ID: {}", record.tmdb_id);
+                            failed += 1;
+                            continue;
+                        }
+                    };
+
+                    let result = match client.get_details(tmdb_id, media_type) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            eprintln!("Failed to fetch TMDb ID {tmdb_id}: {error}");
+                            failed += 1;
+                            continue;
+                        }
+                    };
+
+                    let (title, date) = match record.media_type {
+                        matching::TmdbMediaType::Movie => (
+                            result.title.or(result.name),
+                            result.release_date.or(result.first_air_date),
+                        ),
+                        matching::TmdbMediaType::Tv => (
+                            result.name.or(result.title),
+                            result.first_air_date.or(result.release_date),
+                        ),
+                    };
+
+                    let metadata = database::MediaMetadata {
+                        tmdb_id: record.tmdb_id,
+                        media_type: record.media_type,
+                        title: title.unwrap_or_else(|| "Unknown title".to_string()),
+                        year: date
+                            .as_deref()
+                            .and_then(|date| date.get(..4))
+                            .and_then(|year| year.parse::<u16>().ok()),
+                        overview: result.overview,
+                        poster_path: result.poster_path,
+                    };
+
+                    match database::save_media_metadata(&connection, &metadata) {
+                        Ok(()) => {
+                            println!("Fetched: {}", metadata.title);
+                            fetched += 1;
+                        }
+                        Err(error) => {
+                            eprintln!("Could not save metadata for TMDb ID {tmdb_id}: {error}");
+                            failed += 1;
+                        }
+                    }
+                }
+
+                println!("\nMetadata backfill complete.");
+                println!("Fetched: {fetched}");
+                println!("Already present: {skipped}");
+                println!("Failed: {failed}");
+            })
+            .await
+            {
+                eprintln!("Metadata backfill task failed: {error}");
+                std::process::exit(1);
             }
         }
 
@@ -881,11 +1081,7 @@ fn create_pending_identification(
                 year: date
                     .and_then(|date| date.get(..4))
                     .and_then(|year| year.parse::<u16>().ok()),
-                poster_url: result
-                    .result
-                    .poster_path
-                    .as_deref()
-                    .map(|path| format!("https://image.tmdb.org/t/p/w500{path}")),
+                poster_path: result.result.poster_path.clone(),
             }
         })
         .collect();

@@ -1,0 +1,91 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101014">
+    <title>Marquee</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <a class="brand" href="/">
+                <span class="brand-mark">M</span>
+                <span>MARQUEE</span>
+            </a>
+
+            <nav class="navigation">
+                <span class="nav-label">LIBRARY</span>
+                <button class="nav-item active" data-view="movies">
+                    <span>▣</span> Movies
+                </button>
+                <button class="nav-item" data-view="series">
+                    <span>▤</span> TV Shows
+                </button>
+
+                <span class="nav-label">MANAGE</span>
+                <button class="nav-item" data-view="pending">
+                    <span>◇</span> Needs review
+                    <span class="nav-count" id="pending-count">0</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <span class="status-dot"></span>
+                <span>Local server</span>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar">
+                <div class="breadcrumb">LIBRARY <span>/</span> <strong id="page-name">Movies</strong></div>
+                <div class="topbar-right">
+                    <span id="library-count">Loading library...</span>
+                </div>
+            </header>
+
+            <section class="page-content">
+                <div class="page-heading">
+                    <div>
+                        <p class="eyebrow">YOUR COLLECTION</p>
+                        <h1 id="page-title">Movies</h1>
+                        <p class="page-description" id="page-description">
+                            Your movie collection, all in one place.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="toolbar" id="library-toolbar">
+                    <label class="search-box">
+                        <span>⌕</span>
+                        <input id="search-input" type="search"
+                               placeholder="Search your library...">
+                    </label>
+
+                    <select id="sort-select" aria-label="Sort library">
+                        <option value="title">Title</option>
+                        <option value="year-desc">Newest first</option>
+                        <option value="year-asc">Oldest first</option>
+                    </select>
+                </div>
+
+                <div id="message" class="message" hidden></div>
+
+                <section id="media-grid" class="media-grid"
+                         aria-label="Media library">
+                </section>
+
+                <section id="pending-list" class="pending-list" hidden>
+                </section>
+
+                <section id="media-details" class="media-details" hidden>
+                </section>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
+```
